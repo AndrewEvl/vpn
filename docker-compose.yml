@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  vpn-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: vpn-server
+    ports:
+      # Spring Boot web server
+      - "8080:8080"
+      # OpenVPN
+      - "1194:1194/udp"
+      # WireGuard
+      - "51820:51820/udp"
+    environment:
+      # Server configuration
+      - VPN_SERVER_ADDRESS=${VPN_SERVER_ADDRESS:-localhost}
+      - SPRING_PROFILES_ACTIVE=prod
+      # VPN configuration
+      - VPN_AUTO_START_PROTOCOLS=true
+      # OpenVPN configuration
+      - VPN_PROTOCOLS_OPENVPN_ENABLED=true
+      - VPN_PROTOCOLS_OPENVPN_PORT=1194
+      # WireGuard configuration
+      - VPN_PROTOCOLS_WIREGUARD_ENABLED=true
+      - VPN_PROTOCOLS_WIREGUARD_PORT=51820
+    volumes:
+      # Persist configuration
+      - vpn-config:/app/config
+    cap_add:
+      - NET_ADMIN  # Required for network operations
+    sysctls:
+      - net.ipv4.ip_forward=1  # Enable IP forwarding
+    restart: unless-stopped
+
+volumes:
+  vpn-config:
+    driver: local

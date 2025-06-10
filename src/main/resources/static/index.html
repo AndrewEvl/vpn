@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multi-Protocol VPN Server</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            padding-top: 20px;
+        }
+        .protocol-card {
+            margin-bottom: 20px;
+        }
+        .status-badge {
+            font-size: 1rem;
+        }
+        .running {
+            background-color: #28a745;
+        }
+        .stopped {
+            background-color: #dc3545;
+        }
+        .config-textarea {
+            font-family: monospace;
+            font-size: 0.8rem;
+            height: 300px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header class="mb-4">
+            <h1 class="text-center">Multi-Protocol VPN Server</h1>
+            <p class="text-center lead">Manage your VPN protocols and generate client configurations</p>
+        </header>
+
+        <div class="row mb-4">
+            <div class="col-md-6 offset-md-3">
+                <div class="d-grid gap-2">
+                    <button id="startAllBtn" class="btn btn-success">Start All Protocols</button>
+                    <button id="stopAllBtn" class="btn btn-danger">Stop All Protocols</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="protocolsContainer" class="row">
+            <!-- Protocol cards will be inserted here -->
+            <div class="text-center">
+                <div class="spinner-border" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+                <p>Loading protocols...</p>
+            </div>
+        </div>
+
+        <!-- Client Configuration Modal -->
+        <div class="modal fade" id="configModal" tabindex="-1" aria-labelledby="configModalLabel" aria-hidden="true">
+            <div class="modal-dialog modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="configModalLabel">Generate Client Configuration</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <form id="configForm">
+                            <div class="mb-3">
+                                <label for="username" class="form-label">Username</label>
+                                <input type="text" class="form-control" id="username" required>
+                            </div>
+                            <input type="hidden" id="protocolName">
+                            <button type="submit" class="btn btn-primary">Generate</button>
+                        </form>
+                        <div id="configResult" class="mt-3 d-none">
+                            <h6>Configuration:</h6>
+                            <textarea id="configText" class="form-control config-textarea" readonly></textarea>
+                            <div class="d-grid gap-2 mt-2">
+                                <button id="downloadBtn" class="btn btn-success">Download Configuration</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // API endpoints
+        const API_BASE = '/api/vpn';
+        const PROTOCOLS_ENDPOINT = `${API_BASE}/protocols`;
+        
+        // Bootstrap modal
+        let configModal;
+        
+        document.addEventListener('DOMContentLoaded', function() {
+            // Initialize modal
+            configModal = new bootstrap.Modal(document.getElementById('configModal'));
+            
+            // Load protocols
+            loadProtocols();
+            
+            // Event listeners
+            document.getElementById('startAllBtn').addEventListener('click', startAllProtocols);
+            document.getElementById('stopAllBtn').addEventListener('click', stopAllProtocols);
+            document.getElementById('configForm').addEventListener('submit', generateConfig);
+            document.getElementById('downloadBtn').addEventListener('click', downloadConfig);
+        });
+        
+        // Load all protocols
+        async function loadProtocols() {
+            try {
+                const response = await fetch(PROTOCOLS_ENDPOINT);
+                const data = await response.json();
+                
+                const container = document.getElementById('protocolsContainer');
+                container.innerHTML = '';
+                
+                Object.entries(data).forEach(([key, protocol]) => {
+                    const card = createProtocolCard(key, protocol);
+                    container.appendChild(card);
+                });
+            } catch (error) {
+                console.error('Error loading protocols:', error);
+                document.getElementById('protocolsContainer').innerHTML = `
+                    <div class="col-12 text-center">
+                        <div class="alert alert-danger">
+                            Failed to load protocols. Please try again later.
+                        </div>
+                    </div>
+                `;
+            }
+        }
+        
+        // Create a card for a protocol
+        function createProtocolCard(key, protocol) {
+            const col = document.createElement('div');
+            col.className = 'col-md-6';
+            
+            const statusClass = protocol.running ? 'running' : 'stopped';
+            const statusText = protocol.running ? 'Running' : 'Stopped';
+            
+            col.innerHTML = `
+                <div class="card protocol-card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">${protocol.name}</h5>
+                        <span class="badge status-badge ${statusClass}">${statusText}</span>
+                    </div>
+                    <div class="card-body">
+                        <p><strong>Port:</strong> ${protocol.port}</p>
+                        <div class="d-grid gap-2">
+                            <button class="btn btn-success start-btn" data-protocol="${key}" ${protocol.running ? 'disabled' : ''}>Start</button>
+                            <button class="btn btn-danger stop-btn" data-protocol="${key}" ${!protocol.running ? 'disabled' : ''}>Stop</button>
+                            <button class="btn btn-primary config-btn" data-protocol="${key}">Generate Client Config</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            // Add event listeners
+            setTimeout(() => {
+                const startBtn = col.querySelector('.start-btn');
+                const stopBtn = col.querySelector('.stop-btn');
+                const configBtn = col.querySelector('.config-btn');
+                
+                startBtn.addEventListener('click', () => startProtocol(key));
+                stopBtn.addEventListener('click', () => stopProtocol(key));
+                configBtn.addEventListener('click', () => showConfigModal(key));
+            }, 0);
+            
+            return col;
+        }
+        
+        // Start a protocol
+        async function startProtocol(name) {
+            try {
+                const response = await fetch(`${PROTOCOLS_ENDPOINT}/${name}/start`, {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                
+                if (data.success) {
+                    showAlert(`${name} started successfully`, 'success');
+                } else {
+                    showAlert(`Failed to start ${name}`, 'danger');
+                }
+                
+                // Reload protocols
+                loadProtocols();
+            } catch (error) {
+                console.error(`Error starting ${name}:`, error);
+                showAlert(`Error starting ${name}`, 'danger');
+            }
+        }
+        
+        // Stop a protocol
+        async function stopProtocol(name) {
+            try {
+                const response = await fetch(`${PROTOCOLS_ENDPOINT}/${name}/stop`, {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                
+                if (data.success) {
+                    showAlert(`${name} stopped successfully`, 'success');
+                } else {
+                    showAlert(`Failed to stop ${name}`, 'danger');
+                }
+                
+                // Reload protocols
+                loadProtocols();
+            } catch (error) {
+                console.error(`Error stopping ${name}:`, error);
+                showAlert(`Error stopping ${name}`, 'danger');
+            }
+        }
+        
+        // Start all protocols
+        async function startAllProtocols() {
+            try {
+                const response = await fetch(`${PROTOCOLS_ENDPOINT}/start-all`, {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                
+                showAlert('Started all protocols', 'success');
+                
+                // Reload protocols
+                loadProtocols();
+            } catch (error) {
+                console.error('Error starting all protocols:', error);
+                showAlert('Error starting all protocols', 'danger');
+            }
+        }
+        
+        // Stop all protocols
+        async function stopAllProtocols() {
+            try {
+                const response = await fetch(`${PROTOCOLS_ENDPOINT}/stop-all`, {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                
+                showAlert('Stopped all protocols', 'success');
+                
+                // Reload protocols
+                loadProtocols();
+            } catch (error) {
+                console.error('Error stopping all protocols:', error);
+                showAlert('Error stopping all protocols', 'danger');
+            }
+        }
+        
+        // Show config modal
+        function showConfigModal(name) {
+            document.getElementById('protocolName').value = name;
+            document.getElementById('username').value = '';
+            document.getElementById('configResult').classList.add('d-none');
+            configModal.show();
+        }
+        
+        // Generate client config
+        async function generateConfig(event) {
+            event.preventDefault();
+            
+            const username = document.getElementById('username').value;
+            const protocolName = document.getElementById('protocolName').value;
+            
+            try {
+                const response = await fetch(`${PROTOCOLS_ENDPOINT}/${protocolName}/client-config?username=${encodeURIComponent(username)}`, {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                
+                if (data.config) {
+                    document.getElementById('configText').value = data.config;
+                    document.getElementById('configResult').classList.remove('d-none');
+                } else {
+                    showAlert(`Failed to generate configuration: ${data.error}`, 'danger');
+                }
+            } catch (error) {
+                console.error('Error generating config:', error);
+                showAlert('Error generating configuration', 'danger');
+            }
+        }
+        
+        // Download config
+        function downloadConfig() {
+            const username = document.getElementById('username').value;
+            const protocolName = document.getElementById('protocolName').value;
+            const config = document.getElementById('configText').value;
+            
+            const extension = protocolName.toLowerCase().includes('openvpn') ? 'ovpn' : 'conf';
+            const filename = `${username}-${protocolName}.${extension}`;
+            
+            const blob = new Blob([config], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+        
+        // Show alert
+        function showAlert(message, type) {
+            const alertDiv = document.createElement('div');
+            alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
+            alertDiv.setAttribute('role', 'alert');
+            alertDiv.innerHTML = `
+                ${message}
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            `;
+            
+            const container = document.querySelector('.container');
+            container.insertBefore(alertDiv, container.firstChild);
+            
+            // Auto-dismiss after 5 seconds
+            setTimeout(() => {
+                const bsAlert = new bootstrap.Alert(alertDiv);
+                bsAlert.close();
+            }, 5000);
+        }
+    </script>
+</body>
+</html>
